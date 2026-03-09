@@ -2,145 +2,186 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>HTML5 Simple Runner</title>
+    <title>Kawaii Bunny Adventure</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #5c94fc; font-family: sans-serif; }
-        canvas { display: block; background: #5c94fc; margin: 0 auto; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; font-size: 20px; text-shadow: 2px 2px #000; }
+        body { margin: 0; overflow: hidden; background: #FFEDF6; font-family: 'Arial', sans-serif; }
+        canvas { display: block; background: linear-gradient(#AEEEEE, #FFEDF6); margin: 0 auto; border-bottom: 10px solid #9FD99F; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #FF69B4; font-size: 24px; font-weight: bold; text-shadow: 2px 2px white; }
     </style>
 </head>
 <body>
-    <div id="ui">SCORE: <span id="score">0</span></div>
+    <div id="ui">COINS: <span id="coinCount">0</span> / 5 <br> <small id="msg"></small></div>
     <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
+const coinEl = document.getElementById('coinCount');
+const msgEl = document.getElementById('msg');
 
-// ゲーム設定
 canvas.width = 800;
 canvas.height = 400;
-const gravity = 0.8;
-let score = 0;
-let gameActive = true;
 
-// プレイヤー設定
+let coins = 0;
+let gameActive = true;
+const gravity = 0.6;
+
+// プレイヤー（うさぎ）
 const player = {
-    x: 50, y: 300, w: 30, h: 30,
+    x: 50, y: 300, w: 35, h: 35,
     vx: 0, vy: 0,
-    speed: 5, jumpPower: -15,
-    grounded: false,
-    color: "#ff0000"
+    speed: 4, jumpPower: -13,
+    grounded: false
 };
 
-// 敵・障害物
+// オブジェクト管理
 let enemies = [];
+let pickups = [];
+let goal = { x: 720, y: 250, w: 40, h: 100, active: false };
 let frames = 0;
 
-// キー入力
 const keys = {};
 window.addEventListener('keydown', (e) => keys[e.code] = true);
 window.addEventListener('keyup', (e) => keys[e.code] = false);
 
-function spawnEnemy() {
-    if (frames % 100 === 0) {
-        enemies.push({
-            x: canvas.width, y: 320, w: 30, h: 30,
-            color: "#555", speed: 3 + Math.random() * 2
-        });
+function spawn() {
+    if (frames % 120 === 0) {
+        enemies.push({ x: canvas.width, y: 320, w: 30, h: 30, speed: 2 });
+    }
+    if (frames % 90 === 0 && pickups.length < 5) {
+        pickups.push({ x: canvas.width, y: 150 + Math.random() * 150, w: 20, h: 20 });
     }
 }
 
 function update() {
     if (!gameActive) return;
 
-    // 左右移動
     if (keys['ArrowRight']) player.vx = player.speed;
     else if (keys['ArrowLeft']) player.vx = -player.speed;
     else player.vx *= 0.8;
 
-    // ジャンプ
-    if (keys['Space'] && player.grounded) {
+    if ((keys['Space'] || keys['ArrowUp']) && player.grounded) {
         player.vy = player.jumpPower;
         player.grounded = false;
     }
 
-    // 重力と移動反映
     player.vy += gravity;
     player.x += player.vx;
     player.y += player.vy;
 
-    // 地面との当たり判定
-    if (player.y > 320) {
-        player.y = 320;
-        player.vy = 0;
-        player.grounded = true;
-    }
-
-    // 画面外防止
+    if (player.y > 315) { player.y = 315; player.vy = 0; player.grounded = true; }
     if (player.x < 0) player.x = 0;
     if (player.x > canvas.width - player.w) player.x = canvas.width - player.w;
 
-    // 敵の更新
-    enemies.forEach((enemy, index) => {
-        enemy.x -= enemy.speed;
-
-        // プレイヤーとの当たり判定
-        if (player.x < enemy.x + enemy.w && player.x + player.w > enemy.x &&
-            player.y < enemy.y + enemy.h && player.y + player.h > enemy.y) {
-            
-            // 上から踏んだ場合
-            if (player.vy > 0 && player.y < enemy.y) {
-                enemies.splice(index, 1);
-                player.vy = player.jumpPower / 1.5; // 小ジャンプ
-                score += 100;
-            } else {
-                // 横からぶつかったらゲームオーバー
-                gameActive = false;
-                alert("GAME OVER! SCORE: " + score);
-                location.reload();
-            }
-        }
-
-        // 画面外に出た敵を削除
-        if (enemy.x + enemy.w < 0) {
-            enemies.splice(index, 1);
-            score += 10;
+    // コイン判定
+    pickups.forEach((c, i) => {
+        c.x -= 2;
+        if (rectIntersect(player, c)) {
+            pickups.splice(i, 1);
+            coins++;
+            if (coins >= 5) goal.active = true;
         }
     });
 
-    scoreEl.innerText = score;
+    // 敵判定
+    enemies.forEach((e, i) => {
+        e.x -= e.speed;
+        if (rectIntersect(player, e)) {
+            if (player.vy > 0 && player.y < e.y) {
+                enemies.splice(i, 1);
+                player.vy = -8;
+            } else {
+                gameOver("きゃー！ぶつかっちゃった！");
+            }
+        }
+    });
+
+    // ゴール判定
+    if (rectIntersect(player, goal)) {
+        if (coins >= 5) {
+            gameActive = false;
+            alert("HAPPY GOAL! ケーキでお祝いだよ！");
+            location.reload();
+        } else {
+            msgEl.innerText = "コインが足りないよ！(あと " + (5 - coins) + "枚)";
+            msgEl.style.color = "red";
+        }
+    } else {
+        msgEl.innerText = goal.active ? "ゴールへ急げ！" : "コインを5枚集めてね";
+        msgEl.style.color = "#FF69B4";
+    }
+
+    coinEl.innerText = coins;
     frames++;
+}
+
+function rectIntersect(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // 背景の雲
+    ctx.fillStyle = "white";
+    [100, 300, 600].forEach(cx => {
+        ctx.beginPath();
+        ctx.arc(cx + (frames*0.5 % 200), 80, 30, 0, Math.PI*2);
+        ctx.fill();
+    });
+
     // 地面
-    ctx.fillStyle = "#885500";
+    ctx.fillStyle = "#B3E5B3";
     ctx.fillRect(0, 350, canvas.width, 50);
-    ctx.fillStyle = "#00aa00";
-    ctx.fillRect(0, 350, canvas.width, 10);
 
-    // プレイヤー（簡易マリオ）
-    ctx.fillStyle = player.color;
-    ctx.fillRect(player.x, player.y, player.w, player.h);
-    // 帽子風の飾り
+    // ゴール（旗）
+    ctx.fillStyle = goal.active ? "#FF69B4" : "#CCC";
+    ctx.fillRect(goal.x, goal.y, 5, goal.h);
+    ctx.beginPath();
+    ctx.moveTo(goal.x, goal.y);
+    ctx.lineTo(goal.x + 30, goal.y + 20);
+    ctx.lineTo(goal.x, goal.y + 40);
+    ctx.fill();
+
+    // コイン
+    pickups.forEach(c => {
+        ctx.fillStyle = "#FFD700";
+        ctx.beginPath();
+        ctx.arc(c.x + 10, c.y + 10, 10, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = "orange";
+        ctx.stroke();
+    });
+
+    // プレイヤー（うさぎ）
+    ctx.fillStyle = "#FFC0CB";
+    ctx.fillRect(player.x, player.y, player.w, player.h); // 体
+    ctx.fillRect(player.x + 5, player.y - 15, 10, 20); // 耳L
+    ctx.fillRect(player.x + 20, player.y - 15, 10, 20); // 耳R
     ctx.fillStyle = "black";
-    ctx.fillRect(player.x + 5, player.y + 5, 10, 5);
+    ctx.fillRect(player.x + 25, player.y + 10, 4, 4); // 目
 
-    // 敵（簡易クリボー風）
-    enemies.forEach(enemy => {
-        ctx.fillStyle = enemy.color;
-        ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
+    // 敵（スライム）
+    enemies.forEach(e => {
+        ctx.fillStyle = "#DDA0DD";
+        ctx.beginPath();
+        ctx.ellipse(e.x + 15, e.y + 15, 15, 15, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = "white";
+        ctx.fillRect(e.x + 5, e.y + 5, 5, 5); // リボン風
     });
 
     if (gameActive) {
-        spawnEnemy();
+        spawn();
         update();
         requestAnimationFrame(draw);
     }
+}
+
+function gameOver(m) {
+    gameActive = false;
+    alert(m);
+    location.reload();
 }
 
 draw();
