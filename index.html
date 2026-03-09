@@ -2,17 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Fox Brick Adventure</title>
+    <title>Fox's Hardcore Forest</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #5c94fc; font-family: 'Arial Black', sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #FFF; text-shadow: 2px 2px #000; pointer-events: none; z-index: 10; }
-        #msg { color: #ff0; font-size: 18px; display: none; }
+        body { margin: 0; overflow: hidden; background: #4EA3CC; font-family: 'Arial Black', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #FFF; text-shadow: 3px 3px 0 #2E8B57; pointer-events: none; }
+        .hud-item { font-size: 28px; margin-bottom: 5px; }
+        #msg { color: #FF4500; font-size: 20px; background: rgba(255,255,255,0.8); padding: 5px; border-radius: 5px; display: none; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div>NUTS: <span id="coinCount">0</span> / 10</div>
-        <div id="msg">!!! NEED MORE NUTS !!!</div>
+        <div class="hud-item">NUTS: <span id="coinCount">0</span> / 10 (Total 15)</div>
+        <div id="msg">!!! LACK OF NUTS !!!</div>
     </div>
     <canvas id="gameCanvas"></canvas>
 
@@ -23,45 +24,56 @@ const coinEl = document.getElementById('coinCount');
 const msgEl = document.getElementById('msg');
 
 canvas.width = window.innerWidth;
-canvas.height = 480;
+canvas.height = 500;
 
 const worldWidth = 5500;
-const blockSize = 40;
 let cameraX = 0;
 let coins = 0;
 let gameActive = true;
-const gravity = 0.8;
+const gravity = 0.75;
 
 const player = {
-    x: 80, y: 200, w: 32, h: 32,
-    vx: 0, vy: 0, speed: 5, jumpPower: -16, grounded: false
+    x: 100, y: 300, w: 40, h: 30,
+    vx: 0, vy: 0, acc: 0.7, friction: 0.82, maxSpeed: 7,
+    jumpPower: -16, grounded: false
 };
 
-// ブロック配置 (1=レンガ, 2=ハテナ)
-let mapBlocks = [];
-function addPlatform(startX, y, width, type=1) {
-    for(let i=0; i<width; i++) {
-        mapBlocks.push({x: startX + i*blockSize, y: y, type: type, hit: false});
-    }
-}
-
-// ステージ構成
-addPlatform(0, 400, 25);     // 最初の地面
-addPlatform(400, 280, 3, 2); // ハテナブロック
-addPlatform(1200, 400, 15);  // 第2地面
-addPlatform(1400, 240, 5, 1);
-addPlatform(2800, 400, 20);  // 第3地面
-addPlatform(3000, 250, 2, 2);
-
-let pickups = []; // ハテナから出る用
-let enemies = [
-    {x: 600, y: 368, w: 32, h: 32, speed: 2, dir: 1, type: 'land'},
-    {x: 1500, y: 368, w: 32, h: 32, speed: 3, dir: 1, type: 'land'},
-    {x: 3200, y: 368, w: 32, h: 32, speed: 4, dir: 1, type: 'land'}
+// --- ステージ生成 ---
+const grounds = [
+    {x: 0, w: 800}, {x: 1000, w: 500}, {x: 1700, w: 400}, 
+    {x: 2300, w: 1000}, {x: 3600, w: 600}, {x: 4500, w: 1000}
 ];
 
-const goal = { x: 5300, y: 240, w: 10, h: 160 };
+const platforms = [
+    {x: 820, y: 300, w: 150, h: 15, type: 'moving', offset: 0, speed: 0.05},
+    {x: 1500, y: 250, w: 180, h: 15, type: 'static'},
+    {x: 2120, y: 280, w: 150, h: 15, type: 'moving', offset: 0, speed: 0.08},
+    {x: 3300, y: 320, w: 250, h: 15, type: 'static'},
+    {x: 4250, y: 250, w: 200, h: 15, type: 'moving', offset: 0, speed: 0.04}
+];
 
+// 15個の木の実
+const pickups = Array.from({length: 15}, (_, i) => ({
+    x: 400 + (i * 320), y: 150 + (Math.random() * 180), w: 20, h: 25
+}));
+
+// 敵の種類
+const enemies = [
+    // 地上パトロール
+    {x: 600, y: 320, w: 35, h: 25, type: 'land', speed: 3, dir: 1},
+    {x: 2500, y: 320, w: 35, h: 25, type: 'land', speed: 4, dir: 1},
+    {x: 4700, y: 320, w: 35, h: 25, type: 'land', speed: 5, dir: 1},
+    // ジャンパー
+    {x: 1100, y: 320, w: 30, h: 30, type: 'jumper', vy: 0, jumpCD: 0},
+    {x: 2800, y: 320, w: 30, h: 30, type: 'jumper', vy: 0, jumpCD: 0},
+    // 空飛ぶカラス
+    {x: 1800, y: 100, w: 40, h: 20, type: 'bird', speed: 6},
+    {x: 3800, y: 80, w: 40, h: 20, type: 'bird', speed: 8}
+];
+
+const goal = { x: 5350, y: 200, w: 10, h: 150 };
+
+// --- ロジック ---
 const keys = {};
 window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
@@ -69,10 +81,10 @@ window.addEventListener('keyup', e => keys[e.code] = false);
 function update() {
     if (!gameActive) return;
 
-    // 移動
-    if (keys['ArrowRight']) player.vx = player.speed;
-    else if (keys['ArrowLeft']) player.vx = -player.speed;
-    else player.vx *= 0.8;
+    if (keys['ArrowRight']) player.vx += player.acc;
+    else if (keys['ArrowLeft']) player.vx -= player.acc;
+    else player.vx *= player.friction;
+    player.vx = Math.max(-player.maxSpeed, Math.min(player.vx, player.maxSpeed));
 
     if ((keys['Space'] || keys['ArrowUp']) && player.grounded) {
         player.vy = player.jumpPower;
@@ -84,54 +96,69 @@ function update() {
     player.y += player.vy;
 
     let onGround = false;
-
-    // ブロックとの当たり判定
-    mapBlocks.forEach(b => {
-        // 足元（乗る）
-        if (player.vx >= 0 && player.x + player.w > b.x && player.x < b.x + blockSize &&
-            player.y + player.h > b.y && player.y + player.h < b.y + 20 && player.vy >= 0) {
-            player.y = b.y - player.h;
-            player.vy = 0;
-            onGround = true;
-        }
-        // 頭上（叩く）
-        if (player.x + player.w > b.x && player.x < b.x + blockSize &&
-            player.y < b.y + blockSize && player.y > b.y + 20 && player.vy < 0) {
-            player.vy = 2; // 跳ね返る
-            if (b.type === 2 && !b.hit) {
-                b.hit = true;
-                coins++; // 木の実獲得
-                pickups.push({x: b.x + 10, y: b.y - 30, life: 20}); // 出る演出
-            }
+    grounds.forEach(g => {
+        if (player.x + player.w > g.x && player.x < g.x + g.w && player.y + player.h >= 350 && player.y + player.h <= 375) {
+            player.y = 350 - player.h; player.vy = 0; onGround = true;
         }
     });
 
+    platforms.forEach(p => {
+        let px = p.x;
+        if (p.type === 'moving') {
+            p.offset = Math.sin(Date.now() * p.speed) * 120;
+            px += p.offset;
+        }
+        if (player.vy > 0 && player.x + player.w > px && player.x < px + p.w && player.y + player.h > p.y && player.y + player.h < p.y+15) {
+            player.y = p.y - player.h; player.vy = 0; onGround = true;
+        }
+    });
     player.grounded = onGround;
-    if (player.y > canvas.height) gameOver("落下しました！");
+
+    if (player.y > canvas.height) gameOver("DEAD: FALLEN");
 
     cameraX = player.x - canvas.width/4;
     cameraX = Math.max(0, Math.min(cameraX, worldWidth - canvas.width));
 
-    // 敵
+    pickups.forEach((c, i) => {
+        if (rectIntersect(player, c)) { pickups.splice(i, 1); coins++; }
+    });
+
     enemies.forEach(e => {
-        e.x += e.speed * e.dir;
+        if (e.type === 'land') {
+            e.x += e.speed * e.dir;
+            if (e.x > worldWidth || e.x < 0) e.dir *= -1;
+        } else if (e.type === 'jumper') {
+            e.vy += 0.5; e.y += e.vy;
+            if (e.y >= 320) { e.y = 320; e.vy = -12; }
+        } else if (e.type === 'bird') {
+            e.x -= e.speed; if (e.x < -100) e.x = worldWidth + 500;
+            e.y += Math.sin(Date.now() * 0.01) * 2;
+        }
+
         if (rectIntersect(player, e)) {
             if (player.vy > 0 && player.y < e.y) {
-                e.x = -999; player.vy = -10;
-            } else gameOver("敵に当たりました！");
+                e.x = -9999; player.vy = -10;
+            } else {
+                gameOver("DEAD: CONTACT");
+            }
         }
     });
 
-    coinEl.innerText = coins;
-    if (player.x > goal.x && coins >= 10) {
-        gameActive = false; alert("ゴール！完全攻略！"); location.reload();
-    } else if (player.x > goal.x) {
-        msgEl.style.display = "block";
+    if (rectIntersect(player, goal)) {
+        if (coins >= 10) {
+            gameActive = false; alert("MISSION COMPLETE!"); location.reload();
+        } else {
+            msgEl.style.display = "block";
+        }
+    } else {
+        msgEl.style.display = "none";
     }
+    coinEl.innerText = coins;
 }
 
 function rectIntersect(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    let bx = b.x + (b.offset || 0);
+    return a.x < bx + b.w && a.x + a.w > bx && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 function draw() {
@@ -139,40 +166,49 @@ function draw() {
     ctx.save();
     ctx.translate(-cameraX, 0);
 
-    // ブロック描画
-    mapBlocks.forEach(b => {
-        if (b.type === 1) {
-            ctx.fillStyle = "#a52a2a"; // レンガ
-            ctx.fillRect(b.x, b.y, blockSize-2, blockSize-2);
-            ctx.strokeStyle = "#000"; ctx.strokeRect(b.x, b.y, blockSize-2, blockSize-2);
-        } else {
-            ctx.fillStyle = b.hit ? "#777" : "#ffcc00"; // ハテナ
-            ctx.fillRect(b.x, b.y, blockSize-2, blockSize-2);
-            ctx.fillStyle = "#fff"; ctx.font = "20px Arial";
-            ctx.fillText(b.hit ? "●" : "?", b.x+12, b.y+28);
-        }
+    // 山
+    ctx.fillStyle = "#6EB56B";
+    for(let i=0; i<10; i++) {
+        ctx.beginPath(); ctx.moveTo(i*700, 350); ctx.lineTo(i*700+350, 100); ctx.lineTo(i*700+700, 350); ctx.fill();
+    }
+
+    // 地形
+    grounds.forEach(g => {
+        ctx.fillStyle = "#5D4037"; ctx.fillRect(g.x, 350, g.w, 150);
+        ctx.fillStyle = "#4CAF50"; ctx.fillRect(g.x, 350, g.w, 15);
     });
 
-    // 演出用アニメ
-    pickups.forEach((p, i) => {
-        ctx.fillStyle = "red"; ctx.beginPath(); ctx.arc(p.x+5, p.y, 8, 0, Math.PI*2); ctx.fill();
-        p.y -= 2; p.life--;
-        if(p.life < 0) pickups.splice(i, 1);
+    // 足場
+    platforms.forEach(p => {
+        ctx.fillStyle = "#E0F2F1";
+        let px = p.x + (p.offset || 0);
+        ctx.beginPath(); ctx.roundRect(px, p.y, p.w, p.h, 10); ctx.fill();
+    });
+
+    // 木の実
+    pickups.forEach(c => {
+        ctx.fillStyle = "#D84315"; ctx.beginPath(); ctx.arc(c.x+10, c.y+10, 10, 0, Math.PI*2); ctx.fill();
     });
 
     // 敵
     enemies.forEach(e => {
-        ctx.fillStyle = "green"; ctx.fillRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = e.type === 'land' ? "#2E7D32" : (e.type === 'jumper' ? "#1565C0" : "#212121");
+        ctx.fillRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = "white"; ctx.fillRect(e.x+5, e.y+5, 5, 5);
     });
 
     // ゴール
-    ctx.fillStyle = "#000"; ctx.fillRect(goal.x, goal.y, 5, 160);
-    ctx.fillStyle = "red"; ctx.fillRect(goal.x-30, goal.y, 30, 20);
+    ctx.fillStyle = "#5D4037"; ctx.fillRect(goal.x, goal.y, 8, 150);
+    ctx.fillStyle = coins >= 10 ? "#C62828" : "#9E9E9E";
+    ctx.fillRect(goal.x-30, goal.y, 70, 40);
+    ctx.fillStyle = "white"; ctx.font = "bold 14px Arial";
+    ctx.fillText("EXIT", goal.x-10, goal.y+25);
 
     // プレイヤー（キツネ）
-    ctx.fillStyle = "#ff8c00";
+    ctx.fillStyle = "#EF6C00";
     ctx.fillRect(player.x, player.y, player.w, player.h);
-    ctx.fillStyle = "#000"; ctx.fillRect(player.x+20, player.y+5, 5, 5);
+    ctx.fillStyle = "black"; ctx.fillRect(player.x+player.w-10, player.y+5, 5, 5);
+    ctx.fillStyle = "#FFF"; ctx.fillRect(player.x-10, player.y+10, 15, 10);
 
     ctx.restore();
     if (gameActive) { update(); requestAnimationFrame(draw); }
