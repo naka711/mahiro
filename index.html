@@ -2,59 +2,58 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>CYBER RUNNER - NEO TOKYO</title>
+    <title>Fox's Forest Adventure</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Courier New', monospace; }
-        canvas { display: block; background: #000; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #0ff; font-size: 20px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; pointer-events: none; }
-        .glitch { text-shadow: 2px 0 #f0f, -2px 0 #0ff; }
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Courier New', sans-serif; }
+        canvas { display: block; background: linear-gradient(#87CEEB, #E0F7FA); }
+        #ui { position: absolute; top: 20px; left: 20px; color: #FFF; font-size: 24px; font-weight: bold; text-shadow: 2px 2px #555; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div id="ui">DATA_CORE: <span id="coinCount">0</span> / 5 <br> <span id="msg" class="glitch"></span></div>
+    <div id="ui">NUTS: <span id="coinCount">0</span> / 5 <br> <span id="msg"></span></div>
     <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const coinEl = document.getElementById('coinCount');
-const msgEl = document.getElementById('msg');
 
 canvas.width = window.innerWidth;
 canvas.height = 450;
 
-const worldWidth = 3000; 
+const worldWidth = 4000;
 let cameraX = 0;
 let coins = 0;
 let gameActive = true;
-const gravity = 0.65;
+const gravity = 0.7;
 
 const player = {
-    x: 100, y: 300, w: 30, h: 45,
-    vx: 0, vy: 0, speed: 6, jumpPower: -15, grounded: false,
-    trail: [] // 残像用
+    x: 100, y: 300, w: 45, h: 30,
+    vx: 0, vy: 0, acc: 0.6, friction: 0.85, maxSpeed: 6,
+    jumpPower: -15, grounded: false, animTime: 0
 };
 
-const grounds = [{x: 0, w: 800}, {x: 1000, w: 600}, {x: 1800, w: 1200}];
+// 地形（草地と土）
+const grounds = [{x: 0, w: 1000}, {x: 1200, w: 800}, {x: 2200, w: 1800}];
 
-let pickups = [
-    {x: 400, y: 250}, {x: 750, y: 150}, {x: 1100, y: 280}, 
-    {x: 1400, y: 120}, {x: 1900, y: 250}, {x: 2200, y: 150},
-    {x: 2500, y: 280}, {x: 2700, y: 120}
-].map(p => ({...p, w: 20, h: 20}));
+// 木の実（コイン）
+let pickups = [{x: 400, y: 280}, {x: 800, y: 150}, {x: 1350, y: 250}, {x: 1700, y: 180}, {x: 2300, y: 280}, {x: 2700, y: 150}, {x: 3100, y: 250}, {x: 3500, y: 150}]
+    .map(p => ({...p, w: 20, h: 25}));
 
+// 雲の足場
 let platforms = [
-    {x: 820, y: 250, w: 150, h: 10, type: 'moving', offset: 0},
-    {x: 1620, y: 220, w: 150, h: 10, type: 'static'}
+    {x: 1020, y: 280, w: 150, h: 20, type: 'moving', offset: 0},
+    {x: 2020, y: 220, w: 150, h: 20, type: 'static'}
 ];
 
+// 敵（トゲのある幼虫）
 let enemies = [
-    {x: 500, y: 315, w: 30, h: 30, speed: 3, dir: 1, type: 'land'},
-    {x: 1200, y: 150, w: 35, h: 20, speed: 4, dir: 1, type: 'air'},
-    {x: 2100, y: 315, w: 30, h: 30, speed: 5, dir: 1, type: 'land'}
+    {x: 600, y: 320, w: 35, h: 25, speed: 2, dir: 1},
+    {x: 1500, y: 320, w: 35, h: 25, speed: 2.5, dir: 1},
+    {x: 2800, y: 320, w: 35, h: 25, speed: 3, dir: 1}
 ];
 
-let goal = { x: 2850, y: 150, w: 20, h: 200 };
+const goal = { x: 3850, y: 200, w: 10, h: 150 };
 
 const keys = {};
 window.addEventListener('keydown', e => keys[e.code] = true);
@@ -63,9 +62,12 @@ window.addEventListener('keyup', e => keys[e.code] = false);
 function update() {
     if (!gameActive) return;
 
-    if (keys['ArrowRight']) player.vx = player.speed;
-    else if (keys['ArrowLeft']) player.vx = -player.speed;
-    else player.vx *= 0.85;
+    // 移動計算（加速と摩擦）
+    if (keys['ArrowRight']) player.vx += player.acc;
+    else if (keys['ArrowLeft']) player.vx -= player.acc;
+    else player.vx *= player.friction;
+    
+    player.vx = Math.max(-player.maxSpeed, Math.min(player.vx, player.maxSpeed));
 
     if ((keys['Space'] || keys['ArrowUp']) && player.grounded) {
         player.vy = player.jumpPower;
@@ -75,76 +77,49 @@ function update() {
     player.vy += gravity;
     player.x += player.vx;
     player.y += player.vy;
+    player.animTime += Math.abs(player.vx) * 0.1;
 
-    // 残像の記録
-    player.trail.unshift({x: player.x, y: player.y});
-    if (player.trail.length > 5) player.trail.pop();
-
-    let onAnyGround = false;
+    let onGround = false;
     grounds.forEach(g => {
-        if (player.x + player.w > g.x && player.x < g.x + g.w &&
-            player.y + player.h >= 350 && player.y + player.h <= 375) {
-            player.y = 350 - player.h;
-            player.vy = 0;
-            onAnyGround = true;
+        if (player.x + player.w > g.x && player.x < g.x + g.w && player.y + player.h >= 350 && player.y + player.h <= 370) {
+            player.y = 350 - player.h; player.vy = 0; onGround = true;
         }
     });
 
     platforms.forEach(p => {
         let px = p.x + (p.offset || 0);
-        if (p.type === 'moving') p.offset = Math.sin(Date.now() / 800) * 120;
-        if (player.vy > 0 && player.x + player.w > px && player.x < px + p.w &&
-            player.y + player.h > p.y && player.y + player.h < p.y + p.h + 15) {
-            player.y = p.y - player.h;
-            player.vy = 0;
-            onAnyGround = true;
+        if (p.type === 'moving') p.offset = Math.sin(Date.now()/700)*150;
+        if (player.vy > 0 && player.x + player.w > px && player.x < px + p.w && player.y + player.h > p.y && player.y + player.h < p.y+15) {
+            player.y = p.y - player.h; player.vy = 0; onGround = true;
         }
     });
-    player.grounded = onAnyGround;
+    player.grounded = onGround;
 
-    if (player.y > canvas.height) gameOver("SYSTEM_FAILURE: SIGNAL LOST");
+    if (player.y > canvas.height) gameOver("おっとっと！穴に落ちちゃった");
 
-    cameraX = player.x - canvas.width / 3;
+    cameraX = player.x - canvas.width/3;
     cameraX = Math.max(0, Math.min(cameraX, worldWidth - canvas.width));
 
     pickups.forEach((c, i) => {
-        if (rectIntersect(player, c)) {
-            pickups.splice(i, 1);
-            coins++;
-        }
+        if (rectIntersect(player, c)) { pickups.splice(i, 1); coins++; }
     });
 
     enemies.forEach(e => {
-        if (e.type === 'land') {
-            e.x += e.speed * e.dir;
-            if (e.x > worldWidth || e.x < 0) e.dir *= -1;
-        } else {
-            e.y += Math.sin(Date.now() / 300) * 3;
-            e.x -= 2;
-            if (e.x < -100) e.x = worldWidth;
-        }
+        e.x += e.speed * e.dir;
+        if (e.x > worldWidth || e.x < 0) e.dir *= -1;
         if (rectIntersect(player, e)) {
             if (player.vy > 0 && player.y < e.y) {
-                e.x = -5000;
-                player.vy = -12;
-            } else {
-                gameOver("CONNECTION_INTERRUPTED: DEAD");
-            }
+                e.x = -5000; player.vy = -10; // 踏みつけ
+            } else gameOver("イテッ！敵にぶつかった！");
         }
     });
 
-    if (rectIntersect(player, goal)) {
-        if (coins >= 5) {
-            gameActive = false;
-            alert("ACCESS GRANTED: SECTOR CLEAR");
-            location.reload();
-        } else {
-            msgEl.innerText = ">> ACCESS_DENIED: NEED_DATA_CORE";
-        }
-    } else {
-        msgEl.innerText = "";
-    }
     coinEl.innerText = coins;
+    if (rectIntersect(player, goal) && coins >= 5) {
+        gameActive = false;
+        alert("ゴール！おうちに帰れたよ！");
+        location.reload();
+    }
 }
 
 function rectIntersect(a, b) {
@@ -153,98 +128,71 @@ function rectIntersect(a, b) {
 }
 
 function draw() {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.translate(-cameraX, 0);
 
-    // 背景のビル群
-    ctx.fillStyle = "#111";
-    for(let i=0; i<10; i++) {
-        ctx.fillRect(i*400, 100 + (i%3)*50, 150, 300);
-        ctx.strokeStyle = "#222";
-        ctx.strokeRect(i*400, 100 + (i%3)*50, 150, 300);
+    // 遠景の山
+    ctx.fillStyle = "#A3D9A5";
+    for(let i=0; i<8; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i*600, 350); ctx.lineTo(i*600+300, 150); ctx.lineTo(i*600+600, 350);
+        ctx.fill();
     }
 
-    // 地面（グリッド線入り）
+    // 地面（草と土）
     grounds.forEach(g => {
-        ctx.fillStyle = "#0a0a0a";
-        ctx.fillRect(g.x, 350, g.w, 100);
-        ctx.strokeStyle = "#0ff";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(g.x, 350, g.w, 2);
+        ctx.fillStyle = "#8B4513"; ctx.fillRect(g.x, 355, g.w, 100);
+        ctx.fillStyle = "#2E8B57"; ctx.fillRect(g.x, 350, g.w, 15);
     });
 
-    // 足場（ネオンバー）
+    // 足場（白い雲）
     platforms.forEach(p => {
+        ctx.fillStyle = "white";
         let px = p.x + (p.offset || 0);
-        ctx.fillStyle = "#000";
-        ctx.fillRect(px, p.y, p.w, p.h);
-        ctx.strokeStyle = p.type === 'moving' ? "#f0f" : "#0ff";
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = ctx.strokeStyle;
-        ctx.strokeRect(px, p.y, p.w, p.h);
-        ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.roundRect(px, p.y, p.w, p.h, 10); ctx.fill();
     });
 
-    // コイン (データコア)
+    // 木の実（赤色）
     pickups.forEach(c => {
-        ctx.fillStyle = "#0ff";
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = "#0ff";
-        ctx.fillRect(c.x+5, c.y+5, 10, 10);
-        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#FF4500";
+        ctx.beginPath(); ctx.arc(c.x+10, c.y+10, 10, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#2E8B57"; ctx.fillRect(c.x+8, c.y-2, 4, 6); // ヘタ
     });
 
-    // 敵 (ドローン)
+    // 敵（幼虫）
     enemies.forEach(e => {
-        ctx.fillStyle = "#f00";
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = "#f00";
-        ctx.beginPath();
-        ctx.moveTo(e.x, e.y + e.h);
-        ctx.lineTo(e.x + e.w/2, e.y);
-        ctx.lineTo(e.x + e.w, e.y + e.h);
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#9ACD32";
+        ctx.beginPath(); ctx.ellipse(e.x+15, e.y+15, 15, 10, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "black"; ctx.fillRect(e.x+20, e.y+10, 3, 3); // 目
     });
 
-    // ゴール (ポータル)
-    ctx.strokeStyle = coins >= 5 ? "#0ff" : "#333";
-    ctx.lineWidth = 4;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(goal.x, goal.y, goal.w, goal.h);
-    ctx.setLineDash([]);
+    // ゴール（木の看板）
+    ctx.fillStyle = "#A0522D"; ctx.fillRect(goal.x, goal.y, 10, 150);
+    ctx.fillStyle = coins >= 5 ? "#F4A460" : "#777";
+    ctx.fillRect(goal.x-30, goal.y+20, 70, 40);
+    ctx.fillStyle = "white"; ctx.font = "12px bold Arial";
+    ctx.fillText("GOAL", goal.x-20, goal.y+45);
 
-    // プレイヤー（残像）
-    player.trail.forEach((pos, i) => {
-        ctx.fillStyle = `rgba(0, 255, 255, ${0.4 - i*0.1})`;
-        ctx.fillRect(pos.x, pos.y, player.w, player.h);
-    });
-    // プレイヤー（本体）
-    ctx.fillStyle = "#fff";
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = "#0ff";
-    ctx.fillRect(player.x, player.y, player.w, player.h);
-    ctx.fillStyle = "#0ff";
-    ctx.fillRect(player.x + 10, player.y + 10, 15, 5); // バイザー
-    ctx.shadowBlur = 0;
-
+    // プレイヤー（キツネ）
+    let bounce = Math.sin(player.animTime) * 3; // 走る揺れ
+    ctx.save();
+    ctx.translate(player.x, player.y + (player.grounded ? bounce : 0));
+    ctx.fillStyle = "#D2691E"; // オレンジ色
+    ctx.fillRect(0, 0, 40, 20); // 胴体
+    ctx.fillRect(30, -10, 15, 15); // 頭
+    ctx.fillStyle = "#FFF"; ctx.fillRect(-10, 5, 15, 10); // 尻尾の先
+    ctx.fillStyle = "black"; ctx.fillRect(40, -5, 3, 3); // 目
     ctx.restore();
 
-    if (gameActive) {
-        update();
-        requestAnimationFrame(draw);
-    }
+    ctx.restore();
+    if (gameActive) { update(); requestAnimationFrame(draw); }
 }
 
 function gameOver(t) {
     gameActive = false;
-    ctx.fillStyle = "red";
-    ctx.font = "bold 40px Courier New";
-    ctx.fillText(t, canvas.width/4, canvas.height/2);
-    setTimeout(() => location.reload(), 2000);
+    alert(t);
+    location.reload();
 }
 
 draw();
